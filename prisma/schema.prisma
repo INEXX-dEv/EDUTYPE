@@ -1,0 +1,416 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+
+
+
+
+
+
+// ==================== AUTH & USERS ====================
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? 
+  access_token      String? 
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? 
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+  code       String?
+
+  @@unique([identifier, token])
+}
+
+model PasswordResetToken {
+  id      String   @id @default(cuid())
+  email   String
+  token   String   @unique
+  code    String
+  expires DateTime
+
+  @@index([email])
+}
+
+model User {
+  id              String    @id @default(cuid())
+  studentId       String?   @unique
+  teacherId       String?   @unique
+  email           String    @unique
+  emailVerified   DateTime?
+  password        String?
+  name            String?
+  surname         String?
+  image           String?
+  role String @default("STUDENT")
+  tcNumber        String?
+  school          String?
+  department      String?
+  isApproved      Boolean   @default(false)
+  isBanned        Boolean   @default(false)
+  banReason       String?
+  tag             String?   // ADMIN, DEVELOPER
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  lastLoginAt     DateTime?
+  cookieConsent   Boolean   @default(false)
+  termsAcceptedAt DateTime?
+  mustChangePassword Boolean @default(false)
+
+  accounts        Account[]
+  sessions        Session[]
+  contents        Content[]          @relation("ContentCreator")
+  videoProgress   VideoProgress[]
+  examAttempts    ExamAttempt[]
+  certificates    Certificate[]
+  notifications   Notification[]     @relation("NotificationRecipient")
+  sentNotifications Notification[]   @relation("NotificationSender")
+  groupMemberships GroupMember[]
+  ownedGroups     StudentGroup[]     @relation("GroupOwner")
+  searchHistory   SearchHistory[]
+  promotionRequests AdminPromotionRequest[] @relation("PromotionTarget")
+  promotionRequestedBy AdminPromotionRequest[] @relation("PromotionRequester")
+  promotionApprovals AdminPromotionApproval[]
+
+  @@index([email])
+  @@index([role])
+  @@index([school])
+}
+
+// ==================== CONTENT & VIDEOS ====================
+
+model Content {
+  id          String        @id @default(cuid())
+  contentId   String        @unique @default(cuid())
+  title       String
+  description String        
+  thumbnail   String?
+  status String @default("DRAFT")
+  order       Int           @default(0)
+  categoryId  String?
+  creatorId   String
+  hasExam     Boolean       @default(false)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  viewCount   Int           @default(0)
+  pdfUrl      String?
+  pdfFilename String?
+
+  creator     User          @relation("ContentCreator", fields: [creatorId], references: [id], onDelete: Cascade)
+  category    Category?     @relation(fields: [categoryId], references: [id])
+  videos      Video[]
+  exam        Exam?
+  certificates Certificate[]
+  groupContents GroupContent[]
+
+  @@index([creatorId])
+  @@index([categoryId])
+  @@index([status])
+  @@index([title])
+}
+
+model Category {
+  id          String    @id @default(cuid())
+  name        String    @unique
+  slug        String    @unique
+  description String?
+  icon        String?
+  color       String?
+  order       Int       @default(0)
+  createdAt   DateTime  @default(now())
+
+  contents    Content[]
+}
+
+model Video {
+  id          String   @id @default(cuid())
+  title       String
+  description String?  
+  url         String
+  filename    String
+  duration    Int      @default(0) // seconds
+  size        Int      @default(0) // bytes
+  order       Int      @default(0)
+  contentId   String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  content     Content        @relation(fields: [contentId], references: [id], onDelete: Cascade)
+  progress    VideoProgress[]
+
+  @@index([contentId])
+}
+
+model VideoProgress {
+  id              String   @id @default(cuid())
+  userId          String
+  videoId         String
+  watchedSeconds  Int      @default(0) // max watched point
+  totalDuration   Int      @default(0)
+  completed       Boolean  @default(false)
+  lastPosition    Int      @default(0) // last playback position
+  updatedAt       DateTime @updatedAt
+
+  user    User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  video   Video @relation(fields: [videoId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, videoId])
+  @@index([userId])
+  @@index([videoId])
+}
+
+// ==================== EXAM SYSTEM ====================
+
+model Exam {
+  id          String   @id @default(cuid())
+  contentId   String   @unique
+  title       String
+  description String?  
+  timeLimit   Int?     // minutes
+  passingScore Int     @default(60)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  content     Content       @relation(fields: [contentId], references: [id], onDelete: Cascade)
+  questions   ExamQuestion[]
+  attempts    ExamAttempt[]
+}
+
+model ExamQuestion {
+  id          String   @id @default(cuid())
+  examId      String
+  question    String   
+  order       Int      @default(0)
+  createdAt   DateTime @default(now())
+
+  exam        Exam           @relation(fields: [examId], references: [id], onDelete: Cascade)
+  options     ExamOption[]
+
+  @@index([examId])
+}
+
+model ExamOption {
+  id          String  @id @default(cuid())
+  questionId  String
+  text        String
+  isCorrect   Boolean @default(false)
+  order       Int     @default(0)
+
+  question    ExamQuestion @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@index([questionId])
+}
+
+model ExamAttempt {
+  id          String   @id @default(cuid())
+  userId      String
+  examId      String
+  score       Int      @default(0)
+  totalQuestions Int   @default(0)
+  correctAnswers Int   @default(0)
+  passed      Boolean  @default(false)
+  tabSwitchCount Int   @default(0)
+  startedAt   DateTime @default(now())
+  completedAt DateTime?
+  answers     String?    // Store answers as JSON string
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  exam Exam @relation(fields: [examId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([examId])
+}
+
+// ==================== CERTIFICATES ====================
+
+model Certificate {
+  id          String   @id @default(cuid())
+  certificateCode String @unique
+  userId      String
+  contentId   String
+  studentIdRef String?
+  issuedAt    DateTime @default(now())
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  content Content @relation(fields: [contentId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, contentId])
+  @@index([userId])
+  @@index([certificateCode])
+}
+
+// ==================== NOTIFICATIONS ====================
+
+model Notification {
+  id          String           @id @default(cuid())
+  type String @default("INFO")
+  title       String
+  message     String           
+  isRead      Boolean          @default(false)
+  recipientId String
+  senderId    String?
+  link        String?
+  createdAt   DateTime         @default(now())
+
+  recipient User  @relation("NotificationRecipient", fields: [recipientId], references: [id], onDelete: Cascade)
+  sender    User? @relation("NotificationSender", fields: [senderId], references: [id])
+
+  @@index([recipientId])
+  @@index([senderId])
+  @@index([isRead])
+}
+
+// ==================== STUDENT GROUPS ====================
+
+model StudentGroup {
+  id          String   @id @default(cuid())
+  name        String
+  description String?  
+  ownerId     String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  owner       User           @relation("GroupOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  members     GroupMember[]
+  contents    GroupContent[]
+
+  @@index([ownerId])
+}
+
+model GroupMember {
+  id       String   @id @default(cuid())
+  groupId  String
+  userId   String
+  joinedAt DateTime @default(now())
+
+  group StudentGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  user  User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([groupId, userId])
+  @@index([groupId])
+  @@index([userId])
+}
+
+model GroupContent {
+  id        String   @id @default(cuid())
+  groupId   String
+  contentId String
+  sharedAt  DateTime @default(now())
+
+  group   StudentGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  content Content      @relation(fields: [contentId], references: [id], onDelete: Cascade)
+
+  @@unique([groupId, contentId])
+}
+
+// ==================== SEARCH ====================
+
+model SearchHistory {
+  id        String   @id @default(cuid())
+  userId    String
+  query     String
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+// ==================== SYSTEM ====================
+
+model SystemLog {
+  id        String   @id @default(cuid())
+  level     String   // INFO, WARN, ERROR
+  message   String   
+  metadata  String?
+  createdAt DateTime @default(now())
+
+  @@index([level])
+  @@index([createdAt])
+}
+
+model RateLimitRecord {
+  id        String   @id @default(cuid())
+  ip        String
+  endpoint  String
+  count     Int      @default(1)
+  windowStart DateTime @default(now())
+
+  @@unique([ip, endpoint])
+  @@index([ip])
+  @@index([windowStart])
+}
+
+model CookieConsent {
+  id          String   @id @default(cuid())
+  sessionId   String   @unique
+  necessary   Boolean  @default(true)
+  analytics   Boolean  @default(false)
+  marketing   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+// ==================== ADMIN PROMOTION ====================
+
+model AdminPromotionRequest {
+  id            String   @id @default(cuid())
+  targetUserId  String
+  requestedById String
+  status        String   @default("PENDING") // PENDING, APPROVED, REJECTED
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  targetUser    User     @relation("PromotionTarget", fields: [targetUserId], references: [id], onDelete: Cascade)
+  requestedBy   User     @relation("PromotionRequester", fields: [requestedById], references: [id], onDelete: Cascade)
+  approvals     AdminPromotionApproval[]
+
+  @@index([targetUserId])
+  @@index([status])
+}
+
+model AdminPromotionApproval {
+  id          String   @id @default(cuid())
+  promotionId String
+  approverId  String
+  createdAt   DateTime @default(now())
+
+  promotion   AdminPromotionRequest @relation(fields: [promotionId], references: [id], onDelete: Cascade)
+  approver    User                  @relation(fields: [approverId], references: [id], onDelete: Cascade)
+
+  @@unique([promotionId, approverId])
+  @@index([promotionId])
+}
