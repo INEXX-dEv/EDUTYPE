@@ -39,8 +39,7 @@ export default function LoginPage() {
         toast.error(result.error);
       } else {
         toast.success('Başarıyla giriş yapıldı!');
-        router.push('/dashboard');
-        router.refresh();
+        window.location.href = '/dashboard';
       }
     } catch {
       toast.error('Bir sorun oluştu. Lütfen tekrar deneyin.');
