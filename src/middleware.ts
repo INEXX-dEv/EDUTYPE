@@ -20,12 +20,24 @@ const onboardingPath = '/onboarding';
 
 export async function middleware(req: NextRequest) {
   // Use secure cookie checks in production/proxy setups (e.g. Render)
-  const isSecure = process.env.NODE_ENV === 'production' || req.nextUrl.protocol === 'https:' || req.headers.get('x-forwarded-proto') === 'https';
-  const token = await getToken({ 
+  let token = await getToken({ 
     req, 
     secret: process.env.NEXTAUTH_SECRET,
-    secureCookie: isSecure
+    secureCookie: process.env.NODE_ENV === 'production'
   });
+
+  // Fallback: If getToken fails but we have the secure cookie, try to read it explicitly
+  if (!token) {
+    const secureCookie = req.cookies.get('__Secure-next-auth.session-token');
+    if (secureCookie) {
+      token = await getToken({
+        req,
+        secret: process.env.NEXTAUTH_SECRET,
+        secureCookie: true,
+        cookieName: '__Secure-next-auth.session-token'
+      });
+    }
+  }
   const { pathname } = req.nextUrl;
 
   // Rate limiting for API routes
