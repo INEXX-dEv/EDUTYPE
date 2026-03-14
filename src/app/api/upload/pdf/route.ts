@@ -4,6 +4,8 @@ import { writeFile, mkdir } from 'fs/promises';
 import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 
+const CONTENT_DOCS_DIR = ['public', 'uploads', 'content-documents'];
+
 export async function POST(req: NextRequest) {
     try {
         const session = await getServerSession();
@@ -33,7 +35,7 @@ export async function POST(req: NextRequest) {
         const buffer = Buffer.from(bytes);
 
         // Create upload directory if it doesn't exist
-        const uploadDir = path.join(process.cwd(), 'public', 'uploads', 'pdf');
+        const uploadDir = path.join(process.cwd(), ...CONTENT_DOCS_DIR);
         await mkdir(uploadDir, { recursive: true });
 
         // Generate unique filename
@@ -43,7 +45,7 @@ export async function POST(req: NextRequest) {
 
         await writeFile(filePath, buffer);
 
-        const url = `/uploads/pdf/${uniqueName}`;
+        const url = `/uploads/content-documents/${uniqueName}`;
 
         return NextResponse.json({
             url,

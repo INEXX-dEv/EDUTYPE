@@ -141,8 +141,12 @@ export function SmartVideoPlayer({
       try {
         await video.play();
         setIsPlaying(true);
+        setVideoError('');
       } catch {
-        setVideoError('Video oynatılamadı. MP4 dosyasını kontrol edin.');
+        // Some browsers may throw transient play() errors even when source is valid.
+        if (video.error) {
+          setVideoError('Video kaynağı yüklenemedi. Lütfen dosyayı tekrar kontrol edin.');
+        }
       }
     } else {
       video.pause();
@@ -250,13 +254,18 @@ export function SmartVideoPlayer({
         onLoadedMetadata={handleLoadedMetadata}
         onEnded={handleEnded}
         onWaiting={() => setIsBuffering(true)}
-        onPlaying={() => setIsBuffering(false)}
+        onPlaying={() => {
+          setIsBuffering(false);
+          setIsPlaying(true);
+          setVideoError('');
+        }}
         onLoadedData={() => setVideoError('')}
         onError={() => {
           setIsPlaying(false);
           setIsBuffering(false);
-          setVideoError('Video yüklenemedi. Lütfen MP4 formatı kullanın.');
+          setVideoError('Video yüklenemedi. Bağlantı veya dosya kaynağını kontrol edin.');
         }}
+        preload="metadata"
         playsInline
       />
 
