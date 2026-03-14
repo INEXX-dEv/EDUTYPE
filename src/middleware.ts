@@ -19,7 +19,13 @@ const teacherPaths = ['/dashboard/content/new', '/dashboard/groups'];
 const onboardingPath = '/onboarding';
 
 export async function middleware(req: NextRequest) {
-  const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET });
+  // Use secure cookie checks in production/proxy setups (e.g. Render)
+  const isSecure = process.env.NODE_ENV === 'production' || req.nextUrl.protocol === 'https:' || req.headers.get('x-forwarded-proto') === 'https';
+  const token = await getToken({ 
+    req, 
+    secret: process.env.NEXTAUTH_SECRET,
+    secureCookie: isSecure
+  });
   const { pathname } = req.nextUrl;
 
   // Rate limiting for API routes
