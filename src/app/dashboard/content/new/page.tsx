@@ -19,8 +19,12 @@ import {
   ArrowRight,
   ArrowLeft,
   X,
+  ArrowUp,
+  ArrowDown,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
+
+const MAX_VIDEO_SIZE = 2 * 1024 * 1024 * 1024; // 2GB
 
 export default function NewContentPage() {
   const { data: session } = useSession();
@@ -56,20 +60,40 @@ export default function NewContentPage() {
   // Video dropzone
   const onDrop = useCallback((acceptedFiles: File[]) => {
     const newVideos = acceptedFiles
-      .filter((f) => f.type.startsWith('video/'))
+      .filter((f) => f.type === 'video/mp4' || f.name.toLowerCase().endsWith('.mp4'))
       .map((f) => ({
         file: f,
         title: f.name.replace(/\.[^/.]+$/, ''),
         description: '',
       }));
     setVideos((prev) => [...prev, ...newVideos]);
+
+    const rejectedByType = acceptedFiles.length - newVideos.length;
+    if (rejectedByType > 0) {
+      toast.error('Sadece MP4 formatı destekleniyor');
+    }
   }, []);
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
-    accept: { 'video/*': ['.mp4', '.webm', '.ogg', '.mov'] },
-    maxSize: 500 * 1024 * 1024,
+    accept: { 'video/mp4': ['.mp4'] },
+    maxSize: MAX_VIDEO_SIZE,
+    onDropRejected: () => {
+      toast.error('Video dosyası MP4 olmalı ve 2GB\'ı aşmamalıdır');
+    },
   });
+
+  const moveVideo = (index: number, direction: 'up' | 'down') => {
+    const targetIndex = direction === 'up' ? index - 1 : index + 1;
+    if (targetIndex < 0 || targetIndex >= videos.length) return;
+
+    setVideos((prev) => {
+      const updated = [...prev];
+      const [movedItem] = updated.splice(index, 1);
+      updated.splice(targetIndex, 0, movedItem);
+      return updated;
+    });
+  };
 
   // Step 1: Create Content
   const handleCreateContent = async () => {
@@ -121,7 +145,16 @@ export default function NewContentPage() {
     }
     setIsLoading(true);
     try {
+      let uploadedCount = 0;
+      let failedCount = 0;
+
       for (let i = 0; i < videos.length; i++) {
+        if (videos[i].file.size > MAX_VIDEO_SIZE) {
+          toast.error(`Video ${i + 1} 2GB sınırını aşıyor`);
+          failedCount += 1;
+          continue;
+        }
+
         const formData = new FormData();
         formData.append('file', videos[i].file);
         formData.append('contentId', contentId);
@@ -137,13 +170,25 @@ export default function NewContentPage() {
         if (!res.ok) {
           const data = await res.json();
           toast.error(`Video ${i + 1} yüklenemedi: ${data.error}`);
+          failedCount += 1;
           continue;
         }
 
         setUploadProgress((prev) => ({ ...prev, [i]: 100 }));
+        uploadedCount += 1;
       }
 
-      toast.success('Tüm videolar yüklendi');
+      if (uploadedCount === 0) {
+        toast.error('Hiçbir video yüklenemedi. Lütfen dosyaları kontrol edin.');
+        return;
+      }
+
+      if (failedCount > 0) {
+        toast.error(`${failedCount} video yüklenemedi. Başarısız videoları düzeltip tekrar deneyin.`);
+        return;
+      }
+
+      toast.success(`${uploadedCount} video başarıyla yüklendi`);
 
       if (hasExam) {
         setStep(3);
@@ -409,7 +454,7 @@ export default function NewContentPage() {
                   <input {...getInputProps()} />
                   <Upload className="w-12 h-12 text-surface-500 mx-auto mb-4" />
                   <p className="text-surface-300 mb-1">Videoları sürükleyip bırakın</p>
-                  <p className="text-surface-500 text-sm">MP4, WebM, OGG - Max 500MB</p>
+                  <p className="text-surface-500 text-sm">Sadece MP4 - Max 2GB</p>
                 </div>
               </div>
 
@@ -419,11 +464,32 @@ export default function NewContentPage() {
                   <h3 className="text-white font-bold">Yüklenen Videolar ({videos.length})</h3>
                   {videos.map((video, i) => (
                     <div key={i} className="flex items-start gap-3 p-4 bg-surface-800/50 rounded-xl">
-                      <GripVertical className="w-5 h-5 text-surface-600 mt-2 cursor-grab" />
+                      <div className="flex flex-col items-center gap-1 mt-1">
+                        <GripVertical className="w-5 h-5 text-surface-600" />
+                        <button
+                          type="button"
+                          onClick={() => moveVideo(i, 'up')}
+                          disabled={i === 0}
+                          className="text-surface-500 hover:text-white disabled:opacity-30"
+                          title="Yukarı taşı"
+                        >
+                          <ArrowUp className="w-4 h-4" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => moveVideo(i, 'down')}
+                          disabled={i === videos.length - 1}
+                          className="text-surface-500 hover:text-white disabled:opacity-30"
+                          title="Aşağı taşı"
+                        >
+                          <ArrowDown className="w-4 h-4" />
+                        </button>
+                      </div>
                       <div className="w-10 h-10 rounded-lg bg-brand-500/20 flex items-center justify-center flex-shrink-0">
                         <Video className="w-5 h-5 text-brand-400" />
                       </div>
                       <div className="flex-1 space-y-2">
+                        <p className="text-xs text-surface-500">Sıra: {i + 1} • {(video.file.size / 1024 / 1024).toFixed(1)} MB</p>
                         <input
                           value={video.title}
                           onChange={(e) => {

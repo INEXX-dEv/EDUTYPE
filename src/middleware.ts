@@ -14,7 +14,7 @@ const authPaths = ['/auth/login', '/auth/register'];
 
 const adminPaths = ['/admin'];
 
-const teacherPaths = ['/dashboard/content/new', '/dashboard/groups'];
+const teacherPaths = ['/dashboard/content', '/dashboard/content/new', '/dashboard/groups'];
 
 const onboardingPath = '/onboarding';
 

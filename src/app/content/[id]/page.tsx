@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useSession } from 'next-auth/react';
 import { useRouter, useParams } from 'next/navigation';
+import Link from 'next/link';
 import { motion } from 'framer-motion';
 import { Navbar } from '@/components/layout/Navbar';
 import { SmartVideoPlayer } from '@/components/video/SmartVideoPlayer';
@@ -19,9 +20,39 @@ import {
   FileText,
   Loader2,
   ExternalLink,
+  UserPlus,
+  Unlock,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { formatDuration } from '@/lib/utils';
+
+const getEnrollmentStorageKey = (userId: string) => `lernstack-enrollments:${userId}`;
+
+const readEnrollmentFromStorage = (userId: string, contentId: string) => {
+  if (typeof window === 'undefined') return false;
+
+  try {
+    const raw = window.localStorage.getItem(getEnrollmentStorageKey(userId));
+    if (!raw) return false;
+    const parsed = JSON.parse(raw) as string[];
+    return parsed.includes(contentId);
+  } catch {
+    return false;
+  }
+};
+
+const writeEnrollmentToStorage = (userId: string, contentId: string) => {
+  if (typeof window === 'undefined') return;
+
+  try {
+    const raw = window.localStorage.getItem(getEnrollmentStorageKey(userId));
+    const parsed = raw ? (JSON.parse(raw) as string[]) : [];
+    const next = parsed.includes(contentId) ? parsed : [...parsed, contentId];
+    window.localStorage.setItem(getEnrollmentStorageKey(userId), JSON.stringify(next));
+  } catch {
+    // Ignore storage parse errors to avoid blocking playback.
+  }
+};
 
 export default function ContentDetailPage() {
   const { data: session, status } = useSession();
@@ -34,6 +65,8 @@ export default function ContentDetailPage() {
   const [certificate, setCertificate] = useState<any>(null);
   const [currentVideoIndex, setCurrentVideoIndex] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
+  const [isEnrolled, setIsEnrolled] = useState(false);
+  const [isRegistering, setIsRegistering] = useState(false);
 
   // Dış link modalı state
   const [externalLinkModal, setExternalLinkModal] = useState<{ url: string } | null>(null);
@@ -62,10 +95,55 @@ export default function ContentDetailPage() {
       setContent(data.content);
       setProgress(data.progress || []);
       setCertificate(data.certificate);
+
+      const isCreatorOrAdmin =
+        session?.user?.role === 'ADMIN' ||
+        data.content?.creator?.id === session?.user?.id;
+      const hasServerEnrollment = (data.progress?.length || 0) > 0 || Boolean(data.certificate);
+      const hasStoredEnrollment = session?.user?.id
+        ? readEnrollmentFromStorage(session.user.id, contentId)
+        : false;
+
+      setIsEnrolled(isCreatorOrAdmin || hasServerEnrollment || hasStoredEnrollment);
     } catch {
       toast.error('Bir hata oluştu');
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handleEnroll = async () => {
+    if (!session?.user?.id) {
+      router.push('/auth/login');
+      return;
+    }
+
+    setIsRegistering(true);
+    try {
+      const firstVideo = content?.videos?.[0];
+
+      // Persist server-side by creating initial progress on first video.
+      if (firstVideo) {
+        await fetch('/api/progress', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            videoId: firstVideo.id,
+            currentTime: 0,
+            maxWatched: 0,
+            totalDuration: firstVideo.duration || 0,
+          }),
+        });
+      }
+
+      writeEnrollmentToStorage(session.user.id, contentId);
+      setIsEnrolled(true);
+      toast.success('İçeriğe kayıt oldunuz. Kilit açıldı!');
+      fetchContent();
+    } catch {
+      toast.error('Kayıt işlemi sırasında bir hata oluştu');
+    } finally {
+      setIsRegistering(false);
     }
   };
 
@@ -136,6 +214,13 @@ export default function ContentDetailPage() {
   if (!content) return null;
 
   const currentVideo = content.videos?.[currentVideoIndex];
+  const isCreatorOrAdmin =
+    session?.user?.role === 'ADMIN' ||
+    content?.creator?.id === session?.user?.id;
+  const hasServerEnrollment = progress.length > 0 || Boolean(certificate);
+  const canAccessContent = isCreatorOrAdmin || isEnrolled || hasServerEnrollment;
+  const creatorName = `${content.creator?.name || ''} ${content.creator?.surname || ''}`.trim() || 'İçerik Sahibi';
+  const creatorInitials = `${content.creator?.name?.[0] || ''}${content.creator?.surname?.[0] || ''}`.trim() || 'IS';
 
   return (
     <div className="min-h-screen bg-surface-950">
@@ -156,14 +241,41 @@ export default function ContentDetailPage() {
             {/* Video Oynatıcı */}
             <div className="lg:col-span-2">
               {currentVideo ? (
-                <SmartVideoPlayer
-                  src={currentVideo.url}
-                  title={currentVideo.title}
-                  videoId={currentVideo.id}
-                  maxWatched={getVideoProgress(currentVideo.id)?.watchedSeconds || 0}
-                  onProgress={handleProgress}
-                  onComplete={handleVideoComplete}
-                />
+                canAccessContent ? (
+                  <SmartVideoPlayer
+                    src={currentVideo.url}
+                    title={currentVideo.title}
+                    videoId={currentVideo.id}
+                    maxWatched={getVideoProgress(currentVideo.id)?.watchedSeconds || 0}
+                    onProgress={handleProgress}
+                    onComplete={handleVideoComplete}
+                  />
+                ) : (
+                  <div className="aspect-video rounded-2xl bg-surface-900 border border-surface-700/60 flex items-center justify-center p-6">
+                    <div className="text-center max-w-md">
+                      <div className="w-14 h-14 rounded-2xl bg-brand-500/20 flex items-center justify-center mx-auto mb-4">
+                        <Lock className="w-7 h-7 text-brand-400" />
+                      </div>
+                      <h3 className="text-white font-bold text-xl mb-2">Bu içerik kilitli</h3>
+                      <p className="text-surface-400 text-sm mb-5">
+                        Videoları izlemek için önce içeriğe kayıt olun. Kayıt sonrası oynatıcı ve video listesi açılır.
+                      </p>
+                      <button
+                        onClick={handleEnroll}
+                        disabled={isRegistering}
+                        className="btn-primary inline-flex items-center gap-2"
+                      >
+                        {isRegistering ? (
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                        ) : (
+                          <>
+                            <UserPlus className="w-4 h-4" /> İçeriğe Kayıt Ol
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  </div>
+                )
               ) : (
                 <div className="aspect-video rounded-2xl bg-surface-900 flex items-center justify-center">
                   <p className="text-surface-400">Video bulunamadı</p>
@@ -174,10 +286,20 @@ export default function ContentDetailPage() {
               <div className="mt-6">
                 <h1 className="text-2xl font-bold text-white mb-2">{content.title}</h1>
                 <div className="flex items-center gap-4 text-surface-400 text-sm mb-4">
-                  <span className="flex items-center gap-1">
-                    <User className="w-4 h-4" />
-                    {content.creator?.name} {content.creator?.surname}
-                  </span>
+                  {content.creator?.id ? (
+                    <Link
+                      href={`/profile/${content.creator.id}`}
+                      className="flex items-center gap-1 hover:text-brand-300 transition-colors"
+                    >
+                      <User className="w-4 h-4" />
+                      {creatorName}
+                    </Link>
+                  ) : (
+                    <span className="flex items-center gap-1">
+                      <User className="w-4 h-4" />
+                      {creatorName}
+                    </span>
+                  )}
                   <span className="flex items-center gap-1">
                     <BookOpen className="w-4 h-4" />
                     {content.videos?.length || 0} video
@@ -189,6 +311,48 @@ export default function ContentDetailPage() {
                 <div className="glass-card p-4">
                   <p className="text-surface-300 leading-relaxed">{content.description}</p>
                 </div>
+
+                {!canAccessContent && (
+                  <div className="mt-4 p-4 rounded-xl bg-amber-500/10 border border-amber-500/25 flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2 text-amber-300 text-sm">
+                      <Unlock className="w-4 h-4" />
+                      İçeriğe kayıt olunca kilit açılır.
+                    </div>
+                    <button
+                      onClick={handleEnroll}
+                      disabled={isRegistering}
+                      className="px-3 py-2 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 text-xs font-medium transition-colors disabled:opacity-60"
+                    >
+                      {isRegistering ? 'Kayıt yapılıyor...' : 'Kayıt Ol'}
+                    </button>
+                  </div>
+                )}
+
+                {content.creator?.id && (
+                  <div className="mt-6 glass-card p-5">
+                    <p className="text-surface-400 text-xs mb-3">İçeriği Sunan</p>
+                    <Link
+                      href={`/profile/${content.creator.id}`}
+                      className="flex items-center gap-4 p-3 rounded-xl bg-surface-800/40 hover:bg-surface-800/70 border border-surface-700/50 hover:border-brand-500/40 transition-all group"
+                    >
+                      <div className="w-12 h-12 rounded-xl overflow-hidden bg-gradient-to-br from-brand-500 to-accent-cyan flex items-center justify-center text-white font-bold">
+                        {content.creator?.image ? (
+                          <img src={content.creator.image} alt={creatorName} className="w-full h-full object-cover" />
+                        ) : (
+                          creatorInitials
+                        )}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-white font-semibold line-clamp-1">{creatorName}</p>
+                        <p className="text-surface-400 text-xs mt-0.5 line-clamp-1">
+                          {content._count?.videos || 0} video • {content.viewCount || 0} görüntülenme
+                        </p>
+                        <p className="text-brand-300 text-xs mt-1">Diğer içeriklerini görüntüle</p>
+                      </div>
+                      <ArrowRight className="w-4 h-4 text-surface-500 group-hover:text-brand-300 group-hover:translate-x-0.5 transition-all" />
+                    </Link>
+                  </div>
+                )}
               </div>
 
               {/* Ders Kaynakları / Ek Linkler */}
@@ -269,7 +433,7 @@ export default function ContentDetailPage() {
                 <div className="space-y-2 max-h-[600px] overflow-y-auto">
                   {content.videos?.map((video: any, index: number) => {
                     const videoProgress = getVideoProgress(video.id);
-                    const accessible = isVideoAccessible(index);
+                    const accessible = canAccessContent && isVideoAccessible(index);
                     const isActive = index === currentVideoIndex;
 
                     return (

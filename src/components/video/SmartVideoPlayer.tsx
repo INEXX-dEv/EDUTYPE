@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { motion } from 'framer-motion';
+import { AnimatePresence, motion } from 'framer-motion';
 import {
   Play,
   Pause,
@@ -11,7 +11,7 @@ import {
   Minimize,
   SkipForward,
   SkipBack,
-  Settings,
+  Gauge,
   Lock,
 } from 'lucide-react';
 import { formatDuration } from '@/lib/utils';
@@ -25,6 +25,10 @@ interface SmartVideoPlayerProps {
   onComplete: () => void;
 }
 
+const PLAYBACK_RATES = [0.75, 1, 1.25, 1.5, 2];
+
+const formatPlaybackRate = (rate: number) => `${Number.isInteger(rate) ? rate.toFixed(0) : rate.toFixed(2).replace(/0$/, '')}x`;
+
 export function SmartVideoPlayer({
   src,
   title,
@@ -36,6 +40,8 @@ export function SmartVideoPlayer({
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const progressRef = useRef<HTMLDivElement>(null);
+  const speedMenuRef = useRef<HTMLDivElement>(null);
+  const lastReportedSecondRef = useRef(-1);
 
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
@@ -47,6 +53,9 @@ export function SmartVideoPlayer({
   const [showControls, setShowControls] = useState(true);
   const [isBuffering, setIsBuffering] = useState(false);
   const [showLockMessage, setShowLockMessage] = useState(false);
+  const [playbackRate, setPlaybackRate] = useState(1);
+  const [showSpeedMenu, setShowSpeedMenu] = useState(false);
+  const [videoError, setVideoError] = useState('');
 
   const controlsTimeoutRef = useRef<NodeJS.Timeout>();
 
@@ -65,6 +74,32 @@ export function SmartVideoPlayer({
     };
   }, []);
 
+  useEffect(() => {
+    setMaxWatched(initialMaxWatched);
+  }, [initialMaxWatched]);
+
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      setIsFullscreen(Boolean(document.fullscreenElement));
+    };
+
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    return () => document.removeEventListener('fullscreenchange', handleFullscreenChange);
+  }, []);
+
+  useEffect(() => {
+    if (!showSpeedMenu) return;
+
+    const handleClickOutside = (event: MouseEvent) => {
+      if (speedMenuRef.current && !speedMenuRef.current.contains(event.target as Node)) {
+        setShowSpeedMenu(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [showSpeedMenu]);
+
   // Video event handlers
   const handleTimeUpdate = () => {
     const video = videoRef.current;
@@ -79,15 +114,17 @@ export function SmartVideoPlayer({
     }
 
     // Report progress every 5 seconds
-    if (time % 5 === 0) {
+    if (time % 5 === 0 && lastReportedSecondRef.current !== time) {
       onProgress(time, Math.max(maxWatched, time));
+      lastReportedSecondRef.current = time;
     }
   };
 
   const handleLoadedMetadata = () => {
     const video = videoRef.current;
     if (video) {
-      setDuration(Math.floor(video.duration));
+      setDuration(Math.floor(Number.isFinite(video.duration) ? video.duration : 0));
+      setVideoError('');
     }
   };
 
@@ -96,13 +133,17 @@ export function SmartVideoPlayer({
     onComplete();
   };
 
-  const togglePlay = () => {
+  const togglePlay = async () => {
     const video = videoRef.current;
     if (!video) return;
 
     if (video.paused) {
-      video.play();
-      setIsPlaying(true);
+      try {
+        await video.play();
+        setIsPlaying(true);
+      } catch {
+        setVideoError('Video oynatılamadı. MP4 dosyasını kontrol edin.');
+      }
     } else {
       video.pause();
       setIsPlaying(false);
@@ -127,6 +168,15 @@ export function SmartVideoPlayer({
       setShowLockMessage(true);
       setTimeout(() => setShowLockMessage(false), 2000);
     }
+  };
+
+  const handleSetPlaybackRate = (rate: number) => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    video.playbackRate = rate;
+    setPlaybackRate(rate);
+    setShowSpeedMenu(false);
   };
 
   const handleVolumeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -184,11 +234,15 @@ export function SmartVideoPlayer({
       ref={containerRef}
       className="relative bg-black rounded-2xl overflow-hidden group"
       onMouseMove={handleMouseMove}
-      onMouseLeave={() => isPlaying && setShowControls(false)}
+      onMouseLeave={() => {
+        if (isPlaying) setShowControls(false);
+        setShowSpeedMenu(false);
+      }}
     >
       {/* Video Element */}
       <video
         ref={videoRef}
+        data-video-id={videoId}
         src={src}
         className="w-full aspect-video cursor-pointer"
         onClick={togglePlay}
@@ -197,8 +251,29 @@ export function SmartVideoPlayer({
         onEnded={handleEnded}
         onWaiting={() => setIsBuffering(true)}
         onPlaying={() => setIsBuffering(false)}
+        onLoadedData={() => setVideoError('')}
+        onError={() => {
+          setIsPlaying(false);
+          setIsBuffering(false);
+          setVideoError('Video yüklenemedi. Lütfen MP4 formatı kullanın.');
+        }}
         playsInline
       />
+
+      {/* Video Error */}
+      {videoError && (
+        <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/70 backdrop-blur-sm px-6 text-center">
+          <div className="max-w-sm space-y-3">
+            <p className="text-white font-medium">{videoError}</p>
+            <button
+              onClick={togglePlay}
+              className="px-4 py-2 rounded-lg bg-sky-500 hover:bg-sky-400 text-white text-sm transition-colors"
+            >
+              Tekrar Dene
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Buffering Indicator */}
       {isBuffering && (
@@ -252,22 +327,23 @@ export function SmartVideoPlayer({
         {/* Progress Bar */}
         <div
           ref={progressRef}
-          className="relative h-2 bg-surface-700/50 rounded-full cursor-pointer group/progress mb-3"
+          className="relative h-2.5 bg-slate-800/70 rounded-full cursor-pointer group/progress mb-4 overflow-hidden"
           onClick={handleSeek}
         >
+          <div className="absolute inset-0 bg-gradient-to-r from-sky-900/30 to-sky-700/20 rounded-full" />
           {/* Watched area (accessible) */}
           <div
-            className="absolute top-0 left-0 h-full bg-brand-500/30 rounded-full"
+            className="absolute top-0 left-0 h-full bg-sky-300/25 rounded-full"
             style={{ width: `${watchedPercentage}%` }}
           />
           {/* Current position */}
           <div
-            className="absolute top-0 left-0 h-full bg-brand-500 rounded-full transition-all"
+            className="absolute top-0 left-0 h-full bg-gradient-to-r from-sky-400 via-blue-400 to-cyan-300 rounded-full transition-all shadow-[0_0_14px_rgba(56,189,248,0.75)]"
             style={{ width: `${currentPercentage}%` }}
           />
           {/* Lock indicator for unwatched */}
           <div
-            className="absolute top-0 h-full bg-surface-600/30 rounded-r-full"
+            className="absolute top-0 h-full bg-slate-500/25 rounded-r-full"
             style={{
               left: `${watchedPercentage}%`,
               width: `${100 - watchedPercentage}%`,
@@ -275,7 +351,7 @@ export function SmartVideoPlayer({
           />
           {/* Playhead */}
           <div
-            className="absolute top-1/2 -translate-y-1/2 w-4 h-4 bg-white rounded-full shadow-lg opacity-0 group-hover/progress:opacity-100 transition-opacity"
+            className="absolute top-1/2 -translate-y-1/2 w-4 h-4 bg-sky-200 border border-white/70 rounded-full shadow-[0_0_18px_rgba(56,189,248,0.95)] opacity-0 group-hover/progress:opacity-100 transition-opacity"
             style={{ left: `calc(${currentPercentage}% - 8px)` }}
           />
         </div>
@@ -315,6 +391,42 @@ export function SmartVideoPlayer({
           </div>
 
           <div className="flex items-center gap-2">
+            <div ref={speedMenuRef} className="relative">
+              <button
+                onClick={() => setShowSpeedMenu((prev) => !prev)}
+                className="flex items-center gap-1.5 text-white/80 hover:text-sky-300 transition-colors text-xs px-2.5 py-1.5 rounded-lg bg-black/30 border border-white/10"
+                title="Oynatma hızı"
+              >
+                <Gauge className="w-3.5 h-3.5" />
+                {formatPlaybackRate(playbackRate)}
+              </button>
+
+              <AnimatePresence>
+                {showSpeedMenu && (
+                  <motion.div
+                    initial={{ opacity: 0, y: 8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: 8 }}
+                    className="absolute bottom-11 right-0 w-24 bg-slate-900/95 border border-slate-700 rounded-lg p-1 backdrop-blur-md"
+                  >
+                    {PLAYBACK_RATES.map((rate) => (
+                      <button
+                        key={rate}
+                        onClick={() => handleSetPlaybackRate(rate)}
+                        className={`w-full text-left px-2 py-1.5 rounded text-xs transition-colors ${
+                          playbackRate === rate
+                            ? 'bg-sky-500/20 text-sky-200'
+                            : 'text-slate-200 hover:bg-slate-800'
+                        }`}
+                      >
+                        {formatPlaybackRate(rate)}
+                      </button>
+                    ))}
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+
             <button onClick={toggleFullscreen} className="text-white/70 hover:text-white transition-colors">
               {isFullscreen ? <Minimize className="w-4 h-4" /> : <Maximize className="w-4 h-4" />}
             </button>

@@ -6,6 +6,8 @@ import { writeFile, mkdir } from 'fs/promises';
 import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 
+const MAX_VIDEO_SIZE_BYTES = 2 * 1024 * 1024 * 1024; // 2GB
+
 export async function POST(request: NextRequest) {
   try {
     const session = await getServerSession(authOptions);
@@ -24,15 +26,15 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Dosya ve içerik ID gereklidir' }, { status: 400 });
     }
 
-    // Validate file type
-    const validTypes = ['video/mp4', 'video/webm', 'video/ogg', 'video/quicktime'];
-    if (!validTypes.includes(file.type)) {
-      return NextResponse.json({ error: 'Geçersiz dosya formatı. MP4, WebM veya OGG kullanın.' }, { status: 400 });
+    const fileExt = path.extname(file.name).toLowerCase();
+
+    // Accept only MP4 for maximum browser compatibility.
+    if (file.type !== 'video/mp4' && fileExt !== '.mp4') {
+      return NextResponse.json({ error: 'Sadece MP4 video formatı desteklenmektedir.' }, { status: 400 });
     }
 
-    // Max 500MB
-    if (file.size > 500 * 1024 * 1024) {
-      return NextResponse.json({ error: 'Dosya boyutu 500MB\'ı aşamaz' }, { status: 400 });
+    if (file.size > MAX_VIDEO_SIZE_BYTES) {
+      return NextResponse.json({ error: 'Dosya boyutu 2GB\'ı aşamaz' }, { status: 400 });
     }
 
     // Verify content belongs to user
@@ -47,7 +49,7 @@ export async function POST(request: NextRequest) {
     const uploadDir = path.join(process.cwd(), 'public', 'uploads', 'videos');
     await mkdir(uploadDir, { recursive: true });
 
-    const ext = path.extname(file.name);
+    const ext = fileExt || '.mp4';
     const filename = `${uuidv4()}${ext}`;
     const filePath = path.join(uploadDir, filename);
 
